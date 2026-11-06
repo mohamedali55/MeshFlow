@@ -201,6 +201,21 @@ class PartitionLog:
             return existing_offset, False
         return self.append(event), True
 
+    def append_replica(self, event: Event, expected_offset: int) -> tuple[int, bool]:
+        """Append a leader-assigned event at an exact follower offset."""
+        if isinstance(expected_offset, bool) or not isinstance(expected_offset, int):
+            raise ValueError("expected_offset must be an integer")
+        existing = self._event_index.lookup(event.event_id)
+        if existing is not None:
+            if existing != expected_offset:
+                raise RuntimeError("Replica event ID is mapped to a different offset")
+            return existing, False
+        if self._next_offset != expected_offset:
+            raise RuntimeError(
+                f"Replica offset mismatch: expected {expected_offset}, local {self._next_offset}"
+            )
+        return self.append(event), True
+
     def read(
         self,
         start_offset: int,

@@ -32,10 +32,16 @@ class CoordinatorClient(BrokerClient):
         )
         return self._expect(response, MessageType.NODE_STATUS)
 
-    async def create_topic(self, topic: str, partition_count: int) -> list[dict[str, Any]]:
+    async def create_topic(
+        self, topic: str, partition_count: int, *, replication_factor: int = 1
+    ) -> list[dict[str, Any]]:
         response = await self._request(
             MessageType.CREATE_TOPIC,
-            {"topic": topic, "partition_count": partition_count},
+            {
+                "topic": topic,
+                "partition_count": partition_count,
+                "replication_factor": replication_factor,
+            },
         )
         return self._expect(response, MessageType.GET_TOPIC)["partitions"]
 

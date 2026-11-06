@@ -114,6 +114,7 @@ class Worker:
             sender_id=worker_id,
         )
         self._registered = False
+        self._running = False
         self._stop = asyncio.Event()
         self._metrics_collector = ProcessMetricsCollector()
         self._instance_id = str(uuid4())
@@ -130,10 +131,7 @@ class Worker:
 
     async def run_once(self) -> int:
         """Join/refresh the group, process one batch per assigned partition."""
-        if not self._registered:
-            await self.register()
-        else:
-            await self._coordinator.heartbeat(self.worker_id)
+        await self._ensure_registered()
         assignments = await self._coordinator.join_group(
             self.group_id,
             self.worker_id,
@@ -261,10 +259,12 @@ class Worker:
 
     async def run(self) -> None:
         """Poll until stop() is called."""
+        if self._running:
+            raise RuntimeError("Worker is already running")
         self._stop.clear()
-        await self.register()
+        await self._ensure_registered()
+        self._running = True
         heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-        stopped_cleanly = False
         try:
             while not self._stop.is_set():
                 processed = await self.run_once()
@@ -273,15 +273,38 @@ class Worker:
                         await asyncio.wait_for(self._stop.wait(), timeout=self.poll_interval)
                     except TimeoutError:
                         pass
-            stopped_cleanly = True
         finally:
             heartbeat_task.cancel()
             await asyncio.gather(heartbeat_task, return_exceptions=True)
-            if stopped_cleanly:
-                await self._coordinator.leave_group(self.group_id, self.worker_id)
+            if self._registered:
+                try:
+                    await self._coordinator.leave_group(self.group_id, self.worker_id)
+                except (BrokerRequestError, OSError, TimeoutError, ProtocolError) as exc:
+                    logger.warning(
+                        "Worker could not leave group cleanly: worker_id=%s error=%s",
+                        self.worker_id,
+                        exc,
+                    )
+                finally:
+                    self._registered = False
+            self._running = False
 
     def stop(self) -> None:
         self._stop.set()
+
+    async def _ensure_registered(self) -> None:
+        if not self._registered:
+            await self.register()
+            return
+        try:
+            await self._coordinator.heartbeat(self.worker_id)
+        except (BrokerRequestError, OSError, TimeoutError, ProtocolError):
+            logger.warning(
+                "Worker heartbeat rejected; re-registering: worker_id=%s",
+                self.worker_id,
+            )
+            self._registered = False
+            await self.register()
 
     async def _heartbeat_loop(self) -> None:
         while True:

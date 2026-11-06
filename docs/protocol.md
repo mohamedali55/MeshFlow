@@ -119,6 +119,12 @@ Producers bound simultaneous publishes with `max_in_flight` (100 by default).
 Event-ID deduplication makes an ambiguous publish retry safe within the routed
 partition.
 
+Replicated topics use the internal `REPLICATE_APPEND` operation from the
+leader to each configured follower. The leader returns `PUBLISH_ACK` only
+after all followers acknowledge the exact event offset. If a follower cannot
+be reached, the leader returns `REPLICATION_UNAVAILABLE`; no automatic leader
+election or replica repair is attempted.
+
 Workers retry handler exceptions with bounded exponential backoff. Handlers
 can raise `PermanentHandlerError` to bypass retries for a known-permanent
 failure. By default, after three retries the original event is published to `<source-topic>.DLQ`

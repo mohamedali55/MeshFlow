@@ -262,7 +262,14 @@ class CoordinatorServer:
             if message == MessageType.CREATE_TOPIC:
                 topic = self._string(payload, "topic")
                 count = self._integer(payload, "partition_count", minimum=1)
-                partitions = await asyncio.to_thread(self._store.create_topic, topic, count)
+                replication_factor = (
+                    self._integer(payload, "replication_factor", minimum=1)
+                    if "replication_factor" in payload
+                    else 1
+                )
+                partitions = await asyncio.to_thread(
+                    self._store.create_topic, topic, count, replication_factor
+                )
                 return self._response(
                     request, MessageType.GET_TOPIC, {"topic": topic, "partitions": partitions}
                 )

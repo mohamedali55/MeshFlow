@@ -150,13 +150,21 @@ class MetadataStore:
                 ).fetchall()
         return [self._node_from_row(row) for row in rows]
 
-    def create_topic(self, topic: str, partition_count: int) -> list[dict[str, object]]:
+    def create_topic(
+        self, topic: str, partition_count: int, replication_factor: int = 1
+    ) -> list[dict[str, object]]:
         if not topic or len(topic) > 128:
             raise ValueError("topic must contain 1 to 128 characters")
         if isinstance(partition_count, bool) or not isinstance(partition_count, int):
             raise ValueError("partition_count must be an integer")
         if partition_count <= 0 or partition_count > 100_000:
             raise ValueError("partition_count must be between 1 and 100000")
+        if (
+            isinstance(replication_factor, bool)
+            or not isinstance(replication_factor, int)
+            or replication_factor <= 0
+        ):
+            raise ValueError("replication_factor must be a positive integer")
 
         with self._connect() as connection:
             brokers = connection.execute(
@@ -169,6 +177,8 @@ class MetadataStore:
             ).fetchall()
             if not brokers:
                 raise ValueError("Cannot create a topic without a healthy broker")
+            if replication_factor > len(brokers):
+                raise ValueError("replication_factor cannot exceed healthy broker count")
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
                 "SELECT partition_count FROM topics WHERE name = ?", (topic,)
@@ -185,7 +195,8 @@ class MetadataStore:
                     (topic, partition_count, int(time.time() * 1000)),
                 )
                 for partition_id in range(partition_count):
-                    broker = brokers[partition_id % len(brokers)]
+                    leader_index = partition_id % len(brokers)
+                    broker = brokers[leader_index]
                     connection.execute(
                         """
                         INSERT INTO partitions(topic, partition_id, broker_id)
@@ -193,6 +204,16 @@ class MetadataStore:
                         """,
                         (topic, partition_id, broker["node_id"]),
                     )
+                    for replica_index in range(replication_factor):
+                        replica = brokers[(leader_index + replica_index) % len(brokers)]
+                        connection.execute(
+                            """
+                            INSERT INTO partition_replicas(
+                                topic, partition_id, broker_id, replica_index
+                            ) VALUES (?, ?, ?, ?)
+                            """,
+                            (topic, partition_id, replica["node_id"], replica_index),
+                        )
             return self._topic_partitions(connection, topic)
 
     def get_topic(self, topic: str) -> list[dict[str, object]]:
@@ -226,7 +247,9 @@ class MetadataStore:
             ).fetchone()
             if health is None or health["status"] != "HEALTHY":
                 raise ValueError(f"Partition {topic}/{partition_id} broker is not healthy")
-            return dict(row)
+            route = dict(row)
+            route["replicas"] = self._replica_routes(connection, topic, partition_id)
+            return route
 
     def report_metrics(
         self,
@@ -759,6 +782,33 @@ class MetadataStore:
             topic_rows = connection.execute(
                 "SELECT name, partition_count FROM topics ORDER BY name"
             ).fetchall()
+            ownership_rows = connection.execute(
+                """
+                SELECT p.topic, p.partition_id, p.broker_id AS leader_id,
+                       GROUP_CONCAT(r.broker_id, ',') AS replica_ids
+                FROM partitions AS p
+                LEFT JOIN partition_replicas AS r
+                  ON r.topic = p.topic AND r.partition_id = p.partition_id
+                GROUP BY p.topic, p.partition_id, p.broker_id
+                ORDER BY p.topic, p.partition_id
+                """
+            ).fetchall()
+            lag_rows = connection.execute(
+                """
+                SELECT group_id, topic, partition_id, worker_id, lag_records, timestamp_ms
+                FROM partition_metrics
+                ORDER BY group_id, topic, partition_id
+                """
+            ).fetchall()
+            decision_rows = connection.execute(
+                """
+                SELECT decision_id, group_id, decision_type, status, reason, created_ms,
+                       source_worker, destination_worker, topic, partition_id,
+                       predicted_benefit
+                FROM optimizer_decisions
+                ORDER BY created_ms DESC LIMIT 100
+                """
+            ).fetchall()
         assignment_counts = [
             {
                 "group_id": row["group_id"],
@@ -773,6 +823,17 @@ class MetadataStore:
             "metrics": self.get_metrics(),
             "topics": [dict(row) for row in topic_rows],
             "assignment_counts": assignment_counts,
+            "partition_ownership": [
+                {
+                    "topic": row["topic"],
+                    "partition_id": row["partition_id"],
+                    "leader_id": row["leader_id"],
+                    "replica_ids": (row["replica_ids"].split(",") if row["replica_ids"] else []),
+                }
+                for row in ownership_rows
+            ],
+            "consumer_lag": [dict(row) for row in lag_rows],
+            "optimizer_decisions": [dict(row) for row in decision_rows],
         }
 
     @staticmethod
@@ -1411,6 +1472,31 @@ class MetadataStore:
             """,
             (topic,),
         ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["replicas"] = self._replica_routes(
+                connection, str(row["topic"]), int(row["partition_id"])
+            )
+            result.append(item)
+        return result
+
+    @staticmethod
+    def _replica_routes(
+        connection: sqlite3.Connection, topic: str, partition_id: int
+    ) -> list[dict[str, object]]:
+        rows = connection.execute(
+            """
+            SELECT r.broker_id, r.replica_index, n.host AS broker_host, n.port AS broker_port,
+                   h.status
+            FROM partition_replicas AS r
+            JOIN nodes AS n ON n.node_id = r.broker_id
+            JOIN node_health AS h ON h.node_id = r.broker_id
+            WHERE r.topic = ? AND r.partition_id = ?
+            ORDER BY r.replica_index
+            """,
+            (topic, partition_id),
+        ).fetchall()
         return [dict(row) for row in rows]
 
     def _initialize(self) -> None:
@@ -1436,6 +1522,16 @@ class MetadataStore:
                     partition_id INTEGER NOT NULL CHECK(partition_id >= 0),
                     broker_id TEXT NOT NULL REFERENCES nodes(node_id),
                     PRIMARY KEY(topic, partition_id)
+                );
+                CREATE TABLE IF NOT EXISTS partition_replicas (
+                    topic TEXT NOT NULL,
+                    partition_id INTEGER NOT NULL,
+                    broker_id TEXT NOT NULL REFERENCES nodes(node_id),
+                    replica_index INTEGER NOT NULL CHECK(replica_index >= 0),
+                    PRIMARY KEY(topic, partition_id, broker_id),
+                    UNIQUE(topic, partition_id, replica_index),
+                    FOREIGN KEY(topic, partition_id)
+                        REFERENCES partitions(topic, partition_id) ON DELETE CASCADE
                 );
                 CREATE TABLE IF NOT EXISTS group_topics (
                     group_id TEXT NOT NULL,

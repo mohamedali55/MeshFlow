@@ -265,6 +265,8 @@ class BrokerServer:
         try:
             if request.message_type == MessageType.PUBLISH:
                 return await self._publish(request)
+            if request.message_type == MessageType.REPLICATE_APPEND:
+                return await self._replicate_append(request)
             if request.message_type == MessageType.FETCH:
                 return await self._fetch(request)
             if request.message_type == MessageType.COMMIT_OFFSET:
@@ -283,6 +285,8 @@ class BrokerServer:
                 "STALE_EPOCH",
                 "ASSIGNMENT_REVOKING",
                 "BROKER_NOT_HEALTHY",
+                "REPLICATION_UNAVAILABLE",
+                "NOT_REPLICA",
             }:
                 return self._error_response(request, exc.code, str(exc))
             return self._error_response(
@@ -369,6 +373,53 @@ class BrokerServer:
                 offset, appended = await asyncio.to_thread(log.append_once, event)
             except ValueError as exc:
                 raise RequestValidationError(str(exc)) from exc
+            replicas = route.get("replicas", []) if self._coordinator is not None else []
+            if not isinstance(replicas, list):
+                raise RequestValidationError("Coordinator returned invalid replica metadata")
+            for replica in replicas:
+                if not isinstance(replica, dict):
+                    raise RequestValidationError("Coordinator returned invalid replica metadata")
+                replica_id = replica.get("broker_id")
+                if replica_id == self._config.broker_id:
+                    continue
+                replica_host = replica.get("broker_host")
+                replica_port = replica.get("broker_port")
+                if (
+                    not isinstance(replica_host, str)
+                    or isinstance(replica_port, bool)
+                    or not isinstance(replica_port, int)
+                ):
+                    raise RequestValidationError("Coordinator returned an invalid replica route")
+                follower = BrokerClient(
+                    replica_host,
+                    replica_port,
+                    sender_id=self._config.broker_id,
+                    timeout=self._connection_timeout,
+                    max_retries=0,
+                )
+                try:
+                    response = await follower.request(
+                        MessageType.REPLICATE_APPEND,
+                        {
+                            "topic": topic,
+                            "partition_id": partition_id,
+                            "leader_id": self._config.broker_id,
+                            "offset": offset,
+                            "event": event_data,
+                        },
+                    )
+                except (BrokerRequestError, OSError, TimeoutError, ProtocolError) as exc:
+                    raise BrokerOperationError(
+                        "REPLICATION_UNAVAILABLE",
+                        f"Follower {replica_id!r} is unavailable: {exc}",
+                        retryable=True,
+                    ) from exc
+                if response.message_type != MessageType.PUBLISH_ACK:
+                    raise BrokerOperationError(
+                        "REPLICATION_UNAVAILABLE",
+                        f"Follower {replica_id!r} did not acknowledge replication",
+                        retryable=True,
+                    )
         return self._response(
             request,
             MessageType.PUBLISH_ACK,
@@ -378,6 +429,39 @@ class BrokerServer:
                 "offset": offset,
                 "duplicate": not appended,
             },
+        )
+
+    async def _replicate_append(self, request: Envelope) -> Envelope:
+        payload = request.payload
+        topic = self._required_string(payload, "topic")
+        self._validate_name(topic, "topic")
+        partition_id = self._required_int(payload, "partition_id", minimum=0)
+        expected_offset = self._required_int(payload, "offset", minimum=0)
+        leader_id = self._required_string(payload, "leader_id")
+        if self._coordinator is not None:
+            route = await self._coordinator.partition_by_id(topic, partition_id)
+            if route.get("broker_id") != leader_id:
+                raise BrokerOperationError("NOT_LEADER", "Replication source is not the leader")
+            replicas = route.get("replicas", [])
+            if not any(
+                isinstance(item, dict) and item.get("broker_id") == self._config.broker_id
+                for item in replicas
+            ):
+                raise BrokerOperationError("NOT_REPLICA", "Broker is not a configured replica")
+        event_data = payload.get("event")
+        if not isinstance(event_data, dict):
+            raise RequestValidationError("event must be a JSON object")
+        event = self._parse_event(topic, event_data)
+        key = (topic, partition_id)
+        lock = self._partition_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            log = await self._get_log(key, create=True)
+            assert log is not None
+            offset, _ = await asyncio.to_thread(log.append_replica, event, expected_offset)
+        return self._response(
+            request,
+            MessageType.PUBLISH_ACK,
+            {"topic": topic, "partition_id": partition_id, "offset": offset, "duplicate": True},
         )
 
     async def _fetch(self, request: Envelope) -> Envelope:

@@ -70,7 +70,11 @@ over TCP.
   simulated disk exhaustion, log corruption, concurrent producers, and
   concurrent consumers committing independent partitions.
 - **Observability:** The coordinator exposes a read-only cluster snapshot with
-  node health, current metrics, topics, and assignment-state counts.
+  node health, broker/worker metrics, partition ownership and replicas,
+  consumer lag, topics, assignment-state counts, and optimizer decisions.
+- **Replication:** Configurable synchronous leader/follower partition
+  replication with exact-offset follower appends and explicit failure when a
+  configured follower is unavailable. There is no automatic leader election.
 
 ## Requirements
 
@@ -139,6 +143,8 @@ python -m meshflow.worker.process --worker-id worker-1 --group-id event-workers 
 
 For multi-broker setup, producer/consumer examples, heartbeat and rebalance
 details, and operational caveats, see the [cluster guide](docs/cluster.md).
+The reproducible scheduler comparison is summarized in the
+[benchmark evaluation report](docs/benchmark-report.md).
 
 ## Producer and consumer APIs
 

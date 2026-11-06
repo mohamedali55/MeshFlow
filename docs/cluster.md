@@ -176,9 +176,32 @@ default and retry overload responses within their configured retry budget.
   decisions = await coordinator.decisions("order-workers")
   ```
 
-  `cluster_status()` returns nodes, current metrics, topics, and assignment
-  counts in one read-only snapshot for dashboards and incident inspection.
+  `cluster_status()` returns nodes, current metrics, partition ownership,
+  consumer lag, optimizer decisions, topics, and assignment counts in one
+  read-only snapshot for dashboards and incident inspection.
   Each decision has an explanation and raw/normalized supporting measurements.
+
+## Partition replication
+
+Create a replicated topic by choosing a replication factor no greater than the
+number of healthy brokers:
+
+```python
+await coordinator.create_topic("replicated-events", 6, replication_factor=2)
+```
+
+The coordinator assigns one leader and ordered followers per partition.
+Producers write to the leader; the leader appends locally and waits for every
+configured follower to acknowledge the same event and offset before returning
+success. Event IDs make retries idempotent on both leader and followers.
+
+If a follower disappears, new publishes fail with
+`REPLICATION_UNAVAILABLE` instead of claiming durable success. Existing leader
+data remains readable, but this implementation does not elect a new leader or
+repair replicas automatically. A broker restart recovers its local follower
+log; operators must restore broker health before replicated writes resume.
+Replication is educational synchronous leader/follower replication, not a
+quorum or consensus protocol.
 
 ## Coordinator restart and recovery
 

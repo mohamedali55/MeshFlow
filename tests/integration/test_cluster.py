@@ -34,6 +34,22 @@ async def test_cluster_status_exposes_nodes_metrics_topics_and_assignments(tmp_p
         assert snapshot["topics"] == [{"name": "status-events", "partition_count": 2}]
         assert snapshot["metrics"] == []
         assert snapshot["assignment_counts"] == []
+        assert snapshot["partition_ownership"] == [
+            {
+                "topic": "status-events",
+                "partition_id": 0,
+                "leader_id": "status-broker",
+                "replica_ids": ["status-broker"],
+            },
+            {
+                "topic": "status-events",
+                "partition_id": 1,
+                "leader_id": "status-broker",
+                "replica_ids": ["status-broker"],
+            },
+        ]
+        assert snapshot["consumer_lag"] == []
+        assert snapshot["optimizer_decisions"] == []
         assert snapshot["generated_at_ms"] > 0
     finally:
         await coordinator.close()
@@ -140,6 +156,55 @@ async def test_coordinator_routes_events_across_multiple_brokers(tmp_path) -> No
     finally:
         for broker in brokers:
             await broker.close()
+        await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_replicated_publish_requires_healthy_followers(tmp_path) -> None:
+    coordinator = CoordinatorServer(
+        MetadataStore(tmp_path / "replication.sqlite"),
+        port=0,
+    )
+    await coordinator.start()
+    coordinator_host, coordinator_port = coordinator.address
+    brokers = [
+        BrokerServer(
+            BrokerConfig(
+                broker_id=f"replica-{index}",
+                data_dir=tmp_path / f"replica-data-{index}",
+                host="127.0.0.1",
+                port=0,
+            ),
+            coordinator_host=coordinator_host,
+            coordinator_port=coordinator_port,
+        )
+        for index in range(2)
+    ]
+    try:
+        for broker in brokers:
+            await broker.start()
+        admin = CoordinatorClient(coordinator_host, coordinator_port, sender_id="replication-admin")
+        routes = await admin.create_topic("replicated", 1, replication_factor=2)
+        assert len(routes[0]["replicas"]) == 2
+        leader_host, leader_port = brokers[0].address
+        producer = Producer(
+            leader_host,
+            leader_port,
+            coordinator_host=coordinator_host,
+            coordinator_port=coordinator_port,
+        )
+        event = Event.create("replicated", "key", b"durable")
+        position = await producer.publish(event)
+        follower_records = brokers[1]._logs[("replicated", 0)].read(0)
+        assert [record.event_id for record in follower_records] == [event.event_id]
+        await brokers[1].close()
+        with pytest.raises(BrokerRequestError, match="Follower"):
+            await producer.publish(Event.create("replicated", "key-2", b"blocked"))
+        assert position.offset == 0
+    finally:
+        await brokers[0].close()
+        if brokers[1]._server is not None:
+            await brokers[1].close()
         await coordinator.close()
 
 
