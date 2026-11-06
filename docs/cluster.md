@@ -172,10 +172,22 @@ default and retry overload responses within their configured retry budget.
 
   ```python
   metrics = await coordinator.metrics()
+  snapshot = await coordinator.cluster_status()
   decisions = await coordinator.decisions("order-workers")
   ```
 
+  `cluster_status()` returns nodes, current metrics, topics, and assignment
+  counts in one read-only snapshot for dashboards and incident inspection.
   Each decision has an explanation and raw/normalized supporting measurements.
+
+## Coordinator restart and recovery
+
+Coordinator metadata is stored in SQLite with WAL mode and `synchronous=FULL`.
+Restarting the coordinator with the same database path reconstructs registered
+nodes, topic placement, group assignments, health state, metrics, and optimizer
+decisions. Clients should re-register and heartbeat after a restart; broker and
+worker processes retry their periodic heartbeats, but SQLite persistence is not
+a consensus log and does not provide active failover.
   After a move, the coordinator compares the mean source/destination pressure
   before and after fresh samples arrive, and records actual benefit and
   prediction error. `NO_ACTION` decisions explain which threshold or safety

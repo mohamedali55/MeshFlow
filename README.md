@@ -69,6 +69,8 @@ over TCP.
 - **Correctness evidence:** Integration tests cover interrupted-write recovery,
   simulated disk exhaustion, log corruption, concurrent producers, and
   concurrent consumers committing independent partitions.
+- **Observability:** The coordinator exposes a read-only cluster snapshot with
+  node health, current metrics, topics, and assignment-state counts.
 
 ## Requirements
 

@@ -256,6 +256,9 @@ class CoordinatorServer:
                     raise ValueError("node_id must be a string")
                 metrics = await asyncio.to_thread(self._store.get_metrics, node_id)
                 return self._response(request, MessageType.GET_METRICS, {"metrics": metrics})
+            if message == MessageType.GET_CLUSTER_STATUS:
+                status = await asyncio.to_thread(self._store.cluster_status)
+                return self._response(request, MessageType.GET_CLUSTER_STATUS, status)
             if message == MessageType.CREATE_TOPIC:
                 topic = self._string(payload, "topic")
                 count = self._integer(payload, "partition_count", minimum=1)

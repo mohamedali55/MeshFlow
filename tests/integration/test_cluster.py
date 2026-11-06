@@ -18,6 +18,53 @@ from meshflow.worker import Worker
 
 
 @pytest.mark.asyncio
+async def test_cluster_status_exposes_nodes_metrics_topics_and_assignments(tmp_path) -> None:
+    store = MetadataStore(tmp_path / "coordinator.sqlite")
+    coordinator = CoordinatorServer(store, port=0)
+    await coordinator.start()
+    host, port = coordinator.address
+    try:
+        broker_client = CoordinatorClient(host, port, sender_id="status-broker")
+        await broker_client.register_node("status-broker", "broker", "127.0.0.1", 9500)
+        await broker_client.heartbeat("status-broker")
+        admin = CoordinatorClient(host, port, sender_id="status-admin")
+        await admin.create_topic("status-events", 2)
+        snapshot = await admin.cluster_status()
+        assert snapshot["nodes"][0]["node_id"] == "status-broker"
+        assert snapshot["topics"] == [{"name": "status-events", "partition_count": 2}]
+        assert snapshot["metrics"] == []
+        assert snapshot["assignment_counts"] == []
+        assert snapshot["generated_at_ms"] > 0
+    finally:
+        await coordinator.close()
+
+
+@pytest.mark.asyncio
+async def test_coordinator_restart_preserves_observable_metadata(tmp_path) -> None:
+    database = tmp_path / "coordinator.sqlite"
+    first = CoordinatorServer(MetadataStore(database), port=0)
+    await first.start()
+    host, port = first.address
+    client = CoordinatorClient(host, port, sender_id="recovery-broker")
+    await client.register_node("recovery-broker", "broker", "127.0.0.1", 9500)
+    await client.heartbeat("recovery-broker")
+    await client.create_topic("recovery-events", 1)
+    await first.close()
+
+    second = CoordinatorServer(MetadataStore(database), port=0)
+    await second.start()
+    try:
+        recovered_host, recovered_port = second.address
+        snapshot = await CoordinatorClient(
+            recovered_host, recovered_port, sender_id="recovery-reader"
+        ).cluster_status()
+        assert snapshot["nodes"][0]["node_id"] == "recovery-broker"
+        assert snapshot["topics"] == [{"name": "recovery-events", "partition_count": 1}]
+    finally:
+        await second.close()
+
+
+@pytest.mark.asyncio
 async def test_coordinator_routes_events_across_multiple_brokers(tmp_path) -> None:
     coordinator = CoordinatorServer(
         MetadataStore(tmp_path / "coordinator.sqlite"),

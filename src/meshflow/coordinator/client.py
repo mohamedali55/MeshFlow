@@ -160,6 +160,11 @@ class CoordinatorClient(BrokerClient):
         response = await self._request(MessageType.GET_METRICS, payload)
         return self._expect(response, MessageType.GET_METRICS)["metrics"]
 
+    async def cluster_status(self) -> dict[str, Any]:
+        """Fetch a read-only coordinator snapshot for operational inspection."""
+        response = await self._request(MessageType.GET_CLUSTER_STATUS, {})
+        return self._expect(response, MessageType.GET_CLUSTER_STATUS)
+
     async def heartbeat(self, node_id: str) -> dict[str, Any]:
         response = await self._request(MessageType.HEARTBEAT, {"node_id": node_id})
         return self._expect(response, MessageType.NODE_STATUS)

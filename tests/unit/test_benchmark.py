@@ -32,6 +32,14 @@ def test_benchmark_matches_schedulers_on_seeded_scenarios() -> None:
     assert report["benchmark_type"] == "deterministic_scheduler_simulation"
     assert len(report["raw_runs"]) == 16
     assert len(report["summary"]) == 8
+    assert len(report["evaluation"]) == 2
+    for evaluation in report["evaluation"]:
+        assert evaluation["candidate"] == "adaptive"
+        assert set(evaluation["baseline_comparisons"]) == {
+            "static",
+            "round_robin",
+            "least_loaded",
+        }
     for scenario in ("uneven", "worker_failure"):
         for run in range(2):
             samples = [

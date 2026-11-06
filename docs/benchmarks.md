@@ -25,6 +25,10 @@ worker capacities for each run. One deterministic warm-up run is excluded from
 measurements. The report includes raw per-run throughput, estimated p50/p95/p99
 latency, lag, utilization variance, simulated rebalance/recovery costs, and
 median plus median absolute deviation across repetitions.
+The JSON report also includes an `evaluation` section comparing adaptive
+placement with each baseline for throughput, p95 latency, and lag. Positive
+percentages mean adaptive performed better for that metric. These comparisons
+are simulation results, not production guarantees.
 
 Simulation does not model network, disk, real CPU or memory consumption, or
 handler side effects. Simulated duplicate/lost counts are zero by construction

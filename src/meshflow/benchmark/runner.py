@@ -157,6 +157,39 @@ def run_benchmark(
             row[f"{metric}_mad"] = statistics.median(deviations)
         summary.append(row)
 
+    summary_by_key = {(row["scenario"], row["scheduler"]): row for row in summary}
+    evaluation: list[dict[str, Any]] = []
+    for scenario in scenarios:
+        adaptive = summary_by_key[(scenario, "adaptive")]
+        comparisons: dict[str, dict[str, float]] = {}
+        for baseline_name in ("static", "round_robin", "least_loaded"):
+            baseline = summary_by_key[(scenario, baseline_name)]
+            comparisons[baseline_name] = {
+                "throughput_improvement_percent": _improvement(
+                    float(adaptive["throughput_events_per_time_unit_median"]),
+                    float(baseline["throughput_events_per_time_unit_median"]),
+                ),
+                "p95_latency_reduction_percent": _reduction(
+                    float(adaptive["p95_latency_time_units_median"]),
+                    float(baseline["p95_latency_time_units_median"]),
+                ),
+                "lag_reduction_percent": _reduction(
+                    float(adaptive["estimated_lag_records_median"]),
+                    float(baseline["estimated_lag_records_median"]),
+                ),
+            }
+        evaluation.append(
+            {
+                "scenario": scenario,
+                "candidate": "adaptive",
+                "baseline_comparisons": comparisons,
+                "interpretation": (
+                    "Positive percentages indicate adaptive is better for the metric; "
+                    "zero baseline values are reported as 0."
+                ),
+            }
+        )
+
     return {
         "benchmark_type": "deterministic_scheduler_simulation",
         "interpretation": (
@@ -177,4 +210,19 @@ def run_benchmark(
         },
         "raw_runs": raw_runs,
         "summary": summary,
+        "evaluation": evaluation,
     }
+
+
+def _improvement(candidate: float, baseline: float) -> float:
+    """Return relative improvement where larger values are better."""
+    if baseline == 0:
+        return 0.0
+    return (candidate - baseline) / abs(baseline) * 100
+
+
+def _reduction(candidate: float, baseline: float) -> float:
+    """Return relative reduction where smaller values are better."""
+    if baseline == 0:
+        return 0.0
+    return (baseline - candidate) / abs(baseline) * 100

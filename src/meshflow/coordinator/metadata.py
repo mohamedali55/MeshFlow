@@ -733,6 +733,48 @@ class MetadataStore:
             for row in rows
         ]
 
+    def cluster_status(self) -> dict[str, object]:
+        """Return a compact, read-only snapshot for operators and diagnostics."""
+        nodes = [
+            {
+                "node_id": node.node_id,
+                "role": node.role,
+                "host": node.host,
+                "port": node.port,
+                "capacity": node.capacity,
+                "status": node.status,
+                "last_heartbeat_ms": node.last_heartbeat_ms,
+            }
+            for node in self.list_nodes()
+        ]
+        with self._connect() as connection:
+            assignment_rows = connection.execute(
+                """
+                SELECT group_id, state, COUNT(*) AS count
+                FROM assignments
+                GROUP BY group_id, state
+                ORDER BY group_id, state
+                """
+            ).fetchall()
+            topic_rows = connection.execute(
+                "SELECT name, partition_count FROM topics ORDER BY name"
+            ).fetchall()
+        assignment_counts = [
+            {
+                "group_id": row["group_id"],
+                "state": row["state"],
+                "count": int(row["count"]),
+            }
+            for row in assignment_rows
+        ]
+        return {
+            "generated_at_ms": int(time.time() * 1000),
+            "nodes": nodes,
+            "metrics": self.get_metrics(),
+            "topics": [dict(row) for row in topic_rows],
+            "assignment_counts": assignment_counts,
+        }
+
     @staticmethod
     def _record_decision(
         connection: sqlite3.Connection,
