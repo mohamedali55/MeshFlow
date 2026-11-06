@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "meshflow"
+version = "0.1.0"
+description = "A self-optimizing distributed event-processing system"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = ["psutil>=5.9"]
+
+[project.scripts]
+meshflow-benchmark = "meshflow.benchmark.__main__:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.1",
+    "ruff>=0.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/meshflow"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP"]

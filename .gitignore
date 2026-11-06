@@ -1,0 +1,51 @@
+# Environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.Python
+
+# Test, lint, and coverage caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local data and benchmark outputs
+data/
+*.sqlite
+*.sqlite3
+*.db
+*.sqlite-*
+*.db-*
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.db-wal
+*.db-shm
+*.db-journal
+benchmark-results.json
+benchmark-results.csv
+results/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
