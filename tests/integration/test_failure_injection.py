@@ -12,6 +12,7 @@ from meshflow.broker.segment import LogSegment
 from meshflow.broker.server import BrokerServer
 from meshflow.common.config import BrokerConfig
 from meshflow.common.types import Event
+from meshflow.consumer import Consumer
 from meshflow.producer import Producer
 from meshflow.protocol.client import BrokerRequestError
 
@@ -56,6 +57,40 @@ async def test_corrupted_log_failure_injection_is_detected_on_recovery(tmp_path)
     await recovered.start()
     try:
         assert ("events", 0) in recovered._damaged_partitions
+    finally:
+        await recovered.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupted_tail_is_truncated_and_recovered(tmp_path) -> None:
+    config = BrokerConfig(broker_id="tail-recovery", data_dir=tmp_path, port=0)
+    broker = BrokerServer(config)
+    await broker.start()
+    host, port = broker.address
+    try:
+        producer = Producer(host, port)
+        original = Event.create("events", "key", b"durable")
+        await producer.publish(original)
+    finally:
+        await broker.close()
+
+    segment_path = next(config.partition_dir("events", 0).glob("segment-*.log"))
+    data = segment_path.read_bytes()
+    assert len(data) > 4
+    segment_path.write_bytes(data[:-4])
+
+    recovered = BrokerServer(config)
+    await recovered.start()
+    try:
+        recovered_host, recovered_port = recovered.address
+        fetched = await Consumer(
+            recovered_host, recovered_port, group_id="tail-recovery-readers"
+        ).fetch("events", 0)
+        assert fetched.records == []
+        position = await Producer(recovered_host, recovered_port).publish(
+            Event.create("events", "key", b"after-recovery")
+        )
+        assert position.offset == 0
     finally:
         await recovered.close()
 

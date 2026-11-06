@@ -66,6 +66,9 @@ over TCP.
 - **Experiments:** Seeded workload scenarios and static, round-robin,
   least-loaded, and adaptive scheduler comparisons, plus a local TCP broker
   benchmark and bounded failure-injection helpers.
+- **Correctness evidence:** Integration tests cover interrupted-write recovery,
+  simulated disk exhaustion, log corruption, concurrent producers, and
+  concurrent consumers committing independent partitions.
 
 ## Requirements
 
