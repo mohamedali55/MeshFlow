@@ -45,6 +45,25 @@ def test_topic_partition_count_cannot_be_changed(tmp_path) -> None:
         store.create_topic("events", 4)
 
 
+def test_replication_factor_places_distinct_ordered_replicas(tmp_path) -> None:
+    store = MetadataStore(tmp_path / "metadata.sqlite")
+    _register_brokers(store, 3)
+
+    partitions = store.create_topic("replicated", 4, replication_factor=2)
+    assert partitions[0]["broker_id"] == "broker-0"
+    assert [item["broker_id"] for item in partitions[0]["replicas"]] == [
+        "broker-0",
+        "broker-1",
+    ]
+    assert [item["broker_id"] for item in partitions[1]["replicas"]] == [
+        "broker-1",
+        "broker-2",
+    ]
+
+    with pytest.raises(ValueError, match="cannot exceed"):
+        store.create_topic("too-many", 1, replication_factor=4)
+
+
 def test_greedy_assignments_respect_worker_capacity_and_epochs(tmp_path) -> None:
     store = MetadataStore(tmp_path / "metadata.sqlite")
     _register_brokers(store, 2)

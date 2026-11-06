@@ -68,7 +68,7 @@ class TopicConfig:
         partition_count: Number of partitions. Do not change silently in v0.1.
         retention_bytes: Maximum bytes to retain per partition (0 = unlimited).
         retention_ms: Maximum age in milliseconds (0 = unlimited).
-        replication_factor: Number of replicas (1 in v0.1).
+        replication_factor: Number of synchronous leader/follower replicas.
         partition_algorithm: Hash algorithm used for partition selection.
         partition_algorithm_version: Version of the algorithm for migration safety.
     """

@@ -263,11 +263,13 @@ for scenarios, metrics, limitations, and failure-injection details.
 ## Limitations
 
 MeshFlow is an educational, single-coordinator development system. It currently
-has no replication, consensus, coordinator failover, authentication, or
-encryption. A broker failure makes its local partitions unavailable until that
-broker and its storage recover. Optimization policy weights are experimental,
-and moving a partition cannot split a single hot partition. Keep deployments
-on trusted networks and use disposable data for failure experiments.
+has no consensus, coordinator failover, authentication, or encryption.
+Replicated topics use synchronous educational leader/follower replication, but
+there is no quorum protocol, automatic leader election, or replica repair. A
+broker failure therefore blocks new writes for partitions that require that
+broker as a follower until it recovers. Optimization policy weights are
+experimental, and moving a partition cannot split a single hot partition. Keep
+deployments on trusted networks and use disposable data for failure experiments.
 
 ## License
 
